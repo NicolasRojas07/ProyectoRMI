@@ -1,4 +1,6 @@
-public class Player {
+import java.io.Serializable;
+
+public class Player implements Serializable {
     private int id;
     private String name;
 
@@ -7,6 +9,11 @@ public class Player {
         this.name = name;
     }
 
-    public int getId() { return id; }
-    public String getName() { return name; }
+    public int getId() {
+        return id;
+    }
+
+    public String getName() {
+        return name;
+    }
 }

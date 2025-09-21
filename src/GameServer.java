@@ -3,18 +3,13 @@ import java.rmi.server.UnicastRemoteObject;
 import java.util.*;
 
 public class GameServer extends UnicastRemoteObject implements GameRMI {
+    private Map<Integer, Player> players = new HashMap<>();
+    private Map<Integer, Board> boards = new HashMap<>();
+    private int playerCounter = 0;
+    private int currentTurn = 1; // 🔹 empieza el jugador 1
 
-    private Map<Integer, Player> players;
-    private Map<Integer, Board> boards;
-    private int currentTurn;
-    private int playerCounter;
-
-    public GameServer() throws RemoteException {
+    protected GameServer() throws RemoteException {
         super();
-        players = new HashMap<>();
-        boards = new HashMap<>();
-        currentTurn = 1;
-        playerCounter = 0;
     }
 
     @Override
@@ -29,40 +24,44 @@ public class GameServer extends UnicastRemoteObject implements GameRMI {
 
     @Override
     public synchronized boolean placeShip(int playerId, int x, int y, int size, String orientation) throws RemoteException {
-        Board board = boards.get(playerId);
-        if (board != null) {
-            return board.placeShip(new Ship(size), x, y, orientation);
-        }
-        return false;
+        return boards.get(playerId).placeShip(x, y, size, orientation);
+    }
+
+    @Override
+    public synchronized char[][] getBoard(int playerId) throws RemoteException {
+        return boards.get(playerId).getBoard();
     }
 
     @Override
     public synchronized String shoot(int playerId, int x, int y) throws RemoteException {
         if (playerId != currentTurn) {
-            return "No es tu turno.";
+            return "⏳ No es tu turno. Es el turno de " + players.get(currentTurn).getName();
         }
-        int opponentId = (playerId == 1) ? 2 : 1;
-        Board opponentBoard = boards.get(opponentId);
-        if (opponentBoard == null) return "Esperando al oponente...";
-        boolean hit = opponentBoard.receiveShot(x, y);
-        currentTurn = opponentId;
-        return hit ? "¡Impacto!" : "¡Agua!";
-    }
 
-    @Override
-    public synchronized char[][] getBoard(int playerId) throws RemoteException {
-        Board board = boards.get(playerId);
-        return (board != null) ? board.getGrid() : new char[0][0];
+        // identificar oponente
+        int opponentId = players.keySet().stream()
+                .filter(id -> id != playerId)
+                .findFirst()
+                .orElse(-1);
+
+        if (opponentId == -1) {
+            return "⚠️ No hay oponente disponible.";
+        }
+
+        String result = boards.get(opponentId).receiveShot(x, y);
+
+        if (result.equals("Agua") || result.equals("Tocado")) {
+            currentTurn = opponentId;
+        }
+
+        return "🎯 " + result + ". Ahora es el turno de " + players.get(currentTurn).getName();
     }
 
     @Override
     public synchronized int checkWinner() throws RemoteException {
         for (Map.Entry<Integer, Board> entry : boards.entrySet()) {
             if (entry.getValue().allShipsSunk()) {
-                int loserId = entry.getKey();
-                int winnerId = (loserId == 1) ? 2 : 1;
-                System.out.println("El jugador " + winnerId + " ha ganado la partida.");
-                return winnerId;
+                return entry.getKey();
             }
         }
         return 0;
@@ -70,11 +69,11 @@ public class GameServer extends UnicastRemoteObject implements GameRMI {
 
     @Override
     public synchronized List<String> listPlayers() throws RemoteException {
-        List<String> lista = new ArrayList<>();
+        List<String> list = new ArrayList<>();
         for (Player p : players.values()) {
-            lista.add("ID: " + p.getId() + " | Nombre: " + p.getName());
+            list.add("ID: " + p.getId() + " | Nombre: " + p.getName());
         }
-        return lista;
+        return list;
     }
 
     @Override
@@ -82,9 +81,16 @@ public class GameServer extends UnicastRemoteObject implements GameRMI {
         if (players.containsKey(playerId)) {
             players.remove(playerId);
             boards.remove(playerId);
-            System.out.println("Jugador con ID " + playerId + " eliminado.");
             return true;
         }
         return false;
+    }
+
+    @Override
+    public synchronized String getCurrentTurn() throws RemoteException {
+        if (!players.containsKey(currentTurn)) {
+            return "⚠️ No hay turno activo.";
+        }
+        return "👉 Es el turno de: " + players.get(currentTurn).getName();
     }
 }
