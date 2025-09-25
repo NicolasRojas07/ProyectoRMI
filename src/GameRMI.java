@@ -17,9 +17,6 @@ public interface GameRMI extends Remote {
     void setPlayerReady(int playerId) throws RemoteException;
     boolean allPlayersReady() throws RemoteException;
 
-    // Tablero del enemigo (solo aciertos y fallos)
+    // 👇 Nuevo: tablero enemigo visible (solo aciertos y fallos)
     char[][] getEnemyBoard(int playerId) throws RemoteException;
-
-    // 👇 Nuevo para validar ganador
-    int checkWinner() throws RemoteException;
 }

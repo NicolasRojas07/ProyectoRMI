@@ -3,127 +3,111 @@ import java.rmi.server.UnicastRemoteObject;
 import java.util.*;
 
 public class GameServer extends UnicastRemoteObject implements GameRMI {
-    private Map<Integer, char[][]> boards = new HashMap<>();
-    private Map<Integer, Integer> shipCells = new HashMap<>();  // total casillas ocupadas
-    private Map<Integer, Integer> hits = new HashMap<>();       // aciertos por jugador
-    private Map<Integer, String> players = new HashMap<>();
-    private int currentTurn = 1;
+    private final Map<Integer, String> players = new HashMap<>();
+    private final Map<Integer, Board> boards = new HashMap<>();
+    private final Map<Integer, Boolean> readyPlayers = new HashMap<>();
     private int nextId = 1;
+    private int currentTurn = -1;
 
-    public GameServer() throws RemoteException {}
+    protected GameServer() throws RemoteException { super(); }
 
     @Override
-    public int registerPlayer(String name) {
+    public synchronized int registerPlayer(String name) throws RemoteException {
         int id = nextId++;
-        boards.put(id, new char[10][10]);
         players.put(id, name);
-        shipCells.put(id, 0);
-        hits.put(id, 0);
-
-        // Inicializamos tablero vacío
-        for (int i = 0; i < 10; i++)
-            for (int j = 0; j < 10; j++)
-                boards.get(id)[i][j] = '~';
-
+        boards.put(id, new Board());
+        readyPlayers.put(id, false);
+        System.out.println("Jugador registrado: " + name + " (ID: " + id + ")");
         return id;
     }
 
     @Override
-    public boolean placeShip(int playerId, int x, int y, int size, String orientation) {
-        char[][] board = boards.get(playerId);
-        if (board == null) return false;
+    public synchronized boolean placeShip(int playerId, int x, int y, int size, String orientation) throws RemoteException {
+        return boards.get(playerId).placeShip(x, y, size, orientation);
+    }
 
-        if (orientation.equals("H")) {
-            for (int j = 0; j < size; j++) {
-                board[x][y + j] = 'B';
-            }
-        } else {
-            for (int i = 0; i < size; i++) {
-                board[x + i][y] = 'B';
-            }
+    @Override
+    public synchronized String shoot(int playerId, int x, int y) throws RemoteException {
+        if (currentTurn != playerId) return "No es tu turno.";
+        int opponentId = players.keySet().stream().filter(id -> id != playerId).findFirst().orElse(-1);
+        if (opponentId == -1) return "Esperando a un oponente...";
+        String result = boards.get(opponentId).shoot(x, y);
+        if (result.contains("Impacto") || result.contains("Agua")) {
+            currentTurn = opponentId;
         }
-        shipCells.put(playerId, shipCells.get(playerId) + size); // sumamos casillas
-        return true;
+        return result;
     }
 
     @Override
-    public String shoot(int playerId, int x, int y) {
-        int enemyId = getEnemyId(playerId);
-        char[][] enemyBoard = boards.get(enemyId);
-        if (enemyBoard == null) return "❌ No hay enemigo";
+    public synchronized char[][] getBoard(int playerId) throws RemoteException {
+        return boards.get(playerId).getGrid();
+    }
 
-        if (enemyBoard[x][y] == 'B') {
-            enemyBoard[x][y] = 'X';
-            hits.put(playerId, hits.get(playerId) + 1);
-            return "💥 Impacto!";
-        } else if (enemyBoard[x][y] == '~') {
-            enemyBoard[x][y] = 'O';
-            return "🌊 Agua";
-        } else {
-            return "⚠️ Ya disparaste aquí";
+    @Override
+    public synchronized String getCurrentTurn() throws RemoteException {
+        if (currentTurn == -1) return "Esperando a que todos estén listos...";
+        return "Turno de: " + players.get(currentTurn);
+    }
+
+    @Override
+    public synchronized List<String> listPlayers() throws RemoteException {
+        List<String> list = new ArrayList<>();
+        for (Map.Entry<Integer, String> entry : players.entrySet()) {
+            list.add("ID: " + entry.getKey() + " | Nombre: " + entry.getValue() +
+                    (readyPlayers.get(entry.getKey()) ? " ✅ Listo" : " ⏳ No listo"));
+        }
+        return list;
+    }
+
+    @Override
+    public synchronized boolean removePlayer(int playerId) throws RemoteException {
+        if (players.containsKey(playerId)) {
+            players.remove(playerId);
+            boards.remove(playerId);
+            readyPlayers.remove(playerId);
+            return true;
+        }
+        return false;
+    }
+
+    @Override
+    public synchronized void setPlayerReady(int playerId) throws RemoteException {
+        readyPlayers.put(playerId, true);
+        System.out.println("Jugador listo: " + players.get(playerId));
+
+        if (allPlayersReady() && currentTurn == -1) {
+            currentTurn = players.keySet().iterator().next();
+            System.out.println("La partida comienza. Turno inicial: " + players.get(currentTurn));
         }
     }
 
     @Override
-    public char[][] getBoard(int playerId) { return boards.get(playerId); }
-
-    @Override
-    public String getCurrentTurn() { return players.get(currentTurn); }
-
-    @Override
-    public List<String> listPlayers() { return new ArrayList<>(players.values()); }
-
-    @Override
-    public boolean removePlayer(int playerId) {
-        if (!players.containsKey(playerId)) return false;
-        players.remove(playerId);
-        boards.remove(playerId);
-        shipCells.remove(playerId);
-        hits.remove(playerId);
-        return true;
+    public synchronized boolean allPlayersReady() throws RemoteException {
+        return !readyPlayers.isEmpty() && readyPlayers.values().stream().allMatch(r -> r);
     }
 
+    // 👇 Nuevo método: tablero enemigo filtrado
     @Override
-    public void setPlayerReady(int playerId) { /* lógica de ready */ }
+    public synchronized char[][] getEnemyBoard(int playerId) throws RemoteException {
+        // Buscar oponente
+        int opponentId = players.keySet().stream().filter(id -> id != playerId).findFirst().orElse(-1);
+        if (opponentId == -1) {
+            return new char[10][10]; // vacío si no hay oponente
+        }
 
-    @Override
-    public boolean allPlayersReady() { return true; }
+        char[][] fullBoard = boards.get(opponentId).getGrid();
+        char[][] visibleBoard = new char[10][10];
 
-    @Override
-    public char[][] getEnemyBoard(int playerId) {
-        int enemyId = getEnemyId(playerId);
-        char[][] board = boards.get(enemyId);
-        if (board == null) return null;
-
-        // Solo mostrar X (acierto), O (agua) y ~
-        char[][] filtered = new char[10][10];
-        for (int i = 0; i < 10; i++)
+        for (int i = 0; i < 10; i++) {
             for (int j = 0; j < 10; j++) {
-                if (board[i][j] == 'X' || board[i][j] == 'O') {
-                    filtered[i][j] = board[i][j];
+                char c = fullBoard[i][j];
+                if (c == 'X' || c == 'O') {
+                    visibleBoard[i][j] = c; // mostrar solo disparos
                 } else {
-                    filtered[i][j] = '~';
+                    visibleBoard[i][j] = '~'; // lo demás oculto
                 }
             }
-        return filtered;
-    }
-
-    @Override
-    public int checkWinner() {
-        for (int playerId : players.keySet()) {
-            int total = shipCells.get(playerId);
-            int enemyId = getEnemyId(playerId);
-            if (hits.get(enemyId) == total) {
-                return enemyId; // este jugador destruyó todos los barcos del rival
-            }
         }
-        return -1; // no hay ganador aún
-    }
-
-    private int getEnemyId(int playerId) {
-        for (int id : players.keySet()) {
-            if (id != playerId) return id;
-        }
-        return -1;
+        return visibleBoard;
     }
 }
